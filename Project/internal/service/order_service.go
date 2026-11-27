@@ -22,7 +22,7 @@ func (s *OrderService) Create(ctx context.Context, input order.CreateOrderInput)
 	}
 
 	for _, item := range input.Items {
-		if item.Quantity <= 0 || item.Price < 0 || strings.TrimSpace(item.Name) == "" {
+		if item.Quantity <= 0 || item.Price <= 0 || strings.TrimSpace(item.Name) == "" {
 			return order.Order{}, order.ErrInvalidOrder
 		}
 	}
@@ -44,31 +44,27 @@ func (s *OrderService) Create(ctx context.Context, input order.CreateOrderInput)
 }
 
 func calculateTotalPrice(items []order.Item) int64 {
-    var total int64
-    for _, item := range items {
-        total += int64(item.Quantity) * item.Price
-    }
-    return total
+	var total int64
+	for _, item := range items {
+		total += int64(item.Quantity) * item.Price
+	}
+	return total
 }
 
 func (s *OrderService) GetByID(ctx context.Context, id int64) (order.Order, error) {
-	// TODO: implement the scenario through the repository interface.
 	return s.repository.GetByID(ctx, id)
 }
 
 func (s *OrderService) List(ctx context.Context) ([]order.Order, error) {
-	// TODO: implement the scenario through the repository interface.
 	return s.repository.List(ctx)
 }
 
 func (s *OrderService) UpdateStatus(ctx context.Context, id int64, status order.Status) (order.Order, error) {
-	// TODO: validate the requested transition, update current status and history,
-	// then persist the changed order.
 	value, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return order.Order{}, err
 	}
-	if (status == StatusNew || value.Status == order.StatusCompleted || value.Status == order.StatusCancelled) ||{
+	if status == order.StatusNew || value.Status == order.StatusCompleted || value.Status == order.StatusCancelled {
 		return order.Order{}, order.ErrInvalidStatus
 	}
 

@@ -45,6 +45,30 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (h *Handler) createOrder(w http.ResponseWriter, r *http.Request) {
+	var input order.CreateOrderInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{
+			Error: "invalid request body",
+			Code:  "INVALID_REQUEST_BODY",
+		})
+		return
+	}
+
+	value, err := h.service.Create(r.Context(), input)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{
+			Error: err.Error(),
+			Code:  "CREATE_ORDER_FAILED",
+		})
+		return
+	}
+	
+	writeJSON(w, http.StatusCreated, value)
+}
+
+
+
 func (h *Handler) notImplemented(w http.ResponseWriter, _ *http.Request) {
 	// TODO: replace this placeholder with separate handlers for every endpoint.
 	writeJSON(w, http.StatusNotImplemented, errorResponse{
