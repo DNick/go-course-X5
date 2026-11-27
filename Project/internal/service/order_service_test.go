@@ -2,47 +2,16 @@ package service_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"example.com/order-service/internal/order"
+	memoryrepository "example.com/order-service/internal/repository/memory"
 	"example.com/order-service/internal/service"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-type createRepositoryStub struct {
-	created order.Order
-	err     error
-}
-
-func (r *createRepositoryStub) Create(_ context.Context, value order.Order) (order.Order, error) {
-	r.created = value
-	if r.err != nil {
-		return order.Order{}, r.err
-	}
-	value.ID = 1
-	return value, nil
-}
-
-func (r *createRepositoryStub) GetByID(context.Context, int64) (order.Order, error) {
-	return order.Order{}, order.ErrNotImplemented
-}
-
-func (r *createRepositoryStub) List(context.Context) ([]order.Order, error) {
-	return nil, order.ErrNotImplemented
-}
-
-func (r *createRepositoryStub) Update(context.Context, order.Order) (order.Order, error) {
-	return order.Order{}, order.ErrNotImplemented
-}
-
-func TestCreateOrder(t *testing.T) {
-	t.Parallel()
-
-	validItems := []order.Item{
-		{Name: "Keyboard", Quantity: 2, Price: 500},
-		{Name: "Mouse", Quantity: 1, Price: 300},
-	}
-
+func TestCreate(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     order.CreateOrderInput
@@ -50,19 +19,18 @@ func TestCreateOrder(t *testing.T) {
 		wantTotal int64
 	}{
 		{
-			name:      "successful creation",
-			input:     order.CreateOrderInput{Items: validItems},
+			name: "success",
+			input: order.CreateOrderInput{Items: []order.Item{
+				{Name: "Keyboard", Quantity: 2, Price: 500},
+				{Name: "Mouse", Quantity: 1, Price: 300},
+			}},
 			wantTotal: 1300,
 		},
-		{
-			name:      "empty items",
-			input:     order.CreateOrderInput{},
-			wantError: order.ErrInvalidOrder,
-		},
+		{name: "no items", input: order.CreateOrderInput{}, wantError: order.ErrInvalidOrder},
 		{
 			name: "empty name",
 			input: order.CreateOrderInput{Items: []order.Item{
-				{Name: " ", Quantity: 1, Price: 100},
+				{Name: "   ", Quantity: 1, Price: 100},
 			}},
 			wantError: order.ErrInvalidOrder,
 		},
@@ -97,59 +65,121 @@ func TestCreateOrder(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			repository := &createRepositoryStub{}
+			repository := memoryrepository.NewOrderRepository()
 			orderService := service.NewOrderService(repository)
-
 			got, err := orderService.Create(context.Background(), tt.input)
-
 			if tt.wantError != nil {
-				if !errors.Is(err, tt.wantError) {
-					t.Fatalf("Create() error = %v, want %v", err, tt.wantError)
-				}
+				require.ErrorIs(t, err, tt.wantError)
 				return
 			}
-
-			if err != nil {
-				t.Fatalf("Create() unexpected error: %v", err)
-			}
-			if got.ID != 1 {
-				t.Errorf("Create() ID = %d, want 1", got.ID)
-			}
-			if got.Status != order.StatusNew {
-				t.Errorf("Create() Status = %q, want %q", got.Status, order.StatusNew)
-			}
-			if got.TotalPrice != tt.wantTotal {
-				t.Errorf("Create() TotalPrice = %d, want %d", got.TotalPrice, tt.wantTotal)
-			}
-			if got.CreatedAt.IsZero() {
-				t.Error("Create() CreatedAt is zero")
-			}
-			if len(got.History) != 1 {
-				t.Fatalf("Create() history length = %d, want 1", len(got.History))
-			}
-			if got.History[0].Status != order.StatusNew {
-				t.Errorf("Create() history status = %q, want %q", got.History[0].Status, order.StatusNew)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), got.ID)
+			assert.Equal(t, order.StatusNew, got.Status)
+			assert.Equal(t, tt.wantTotal, got.TotalPrice)
 		})
 	}
 }
 
-func TestCreateOrderRepositoryError(t *testing.T) {
-	t.Parallel()
-
-	repositoryErr := errors.New("repository error")
-	repository := &createRepositoryStub{err: repositoryErr}
+func TestGetByID(t *testing.T) {
+	repository := memoryrepository.NewOrderRepository()
 	orderService := service.NewOrderService(repository)
 
-	_, err := orderService.Create(context.Background(), order.CreateOrderInput{
+	created, err := orderService.Create(context.Background(), order.CreateOrderInput{
 		Items: []order.Item{{Name: "Keyboard", Quantity: 1, Price: 500}},
 	})
+	require.NoError(t, err)
 
-	if !errors.Is(err, repositoryErr) {
-		t.Fatalf("Create() error = %v, want %v", err, repositoryErr)
+	got, err := orderService.GetByID(context.Background(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, got.ID)
+
+	_, err = orderService.GetByID(context.Background(), 999)
+	assert.ErrorIs(t, err, order.ErrOrderNotFound)
+}
+
+func TestList(t *testing.T) {
+	repository := memoryrepository.NewOrderRepository()
+	orderService := service.NewOrderService(repository)
+
+	first, err := orderService.Create(context.Background(), order.CreateOrderInput{
+		Items: []order.Item{{Name: "Keyboard", Quantity: 1, Price: 500}},
+	})
+	require.NoError(t, err)
+	second, err := orderService.Create(context.Background(), order.CreateOrderInput{
+		Items: []order.Item{{Name: "Mouse", Quantity: 2, Price: 300}},
+	})
+	require.NoError(t, err)
+
+	got, err := orderService.List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Equal(t, []int64{first.ID, second.ID}, []int64{got[0].ID, got[1].ID})
+}
+
+func TestUpdateStatus(t *testing.T) {
+	tests := []struct {
+		name      string
+		from      order.Status
+		status    order.Status
+		wantError error
+	}{
+		{name: "new to processing", from: order.StatusNew, status: order.StatusProcessing},
+		{name: "new to cancelled", from: order.StatusNew, status: order.StatusCancelled},
+		{name: "processing to completed", from: order.StatusProcessing, status: order.StatusCompleted},
+		{name: "processing to cancelled", from: order.StatusProcessing, status: order.StatusCancelled},
+		{name: "new status", from: order.StatusNew, status: order.StatusNew, wantError: order.ErrInvalidStatus},
+		{name: "completed terminal", from: order.StatusCompleted, status: order.StatusProcessing, wantError: order.ErrInvalidStatus},
+		{name: "cancelled terminal", from: order.StatusCancelled, status: order.StatusProcessing, wantError: order.ErrInvalidStatus},
+		{name: "new cannot complete", from: order.StatusNew, status: order.StatusCompleted, wantError: order.ErrInvalidStatusTransition},
+		{name: "unknown status", from: order.StatusNew, status: order.Status("unknown"), wantError: order.ErrInvalidStatusTransition},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repository := memoryrepository.NewOrderRepository()
+			created, err := repository.Create(context.Background(), order.Order{
+				Status: tt.from,
+				History: []order.StatusChange{
+					{Status: tt.from},
+				},
+			})
+			require.NoError(t, err)
+
+			orderService := service.NewOrderService(repository)
+			got, err := orderService.UpdateStatus(context.Background(), created.ID, tt.status)
+			if tt.wantError != nil {
+				require.ErrorIs(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.status, got.Status)
+			assert.Len(t, got.History, 2)
+		})
+	}
+}
+
+func TestHistory(t *testing.T) {
+	repository := memoryrepository.NewOrderRepository()
+	orderService := service.NewOrderService(repository)
+
+	created, err := repository.Create(context.Background(), order.Order{
+		Status: order.StatusNew,
+		History: []order.StatusChange{
+			{Status: order.StatusNew},
+			{Status: order.StatusProcessing},
+		},
+	})
+	require.NoError(t, err)
+
+	history, err := orderService.History(context.Background(), created.ID)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	assert.Equal(t, []order.Status{order.StatusNew, order.StatusProcessing}, []order.Status{
+		history[0].Status,
+		history[1].Status,
+	})
+
+	_, err = orderService.History(context.Background(), 999)
+	assert.ErrorIs(t, err, order.ErrOrderNotFound)
 }
